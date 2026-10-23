@@ -1081,7 +1081,7 @@ div.swal2-container {
               <div class="game" ref="gameDiv" id="gameWrapper">
                 <div class="video-wrapper" ref="remoteWrapper" id="video-wrapper" :style="{ width: videoWidth + 'px', height: videoHeight + 'px' }">
                   <audio class="audio" id="remote-audio" ref="remoteAudio" style="display: none" muted autoplay playsinline></audio>
-                  <video class="video" id="remote-video" ref="remoteVideo" :class="{rotate:isRotate}" autoplay muted playsinline disablePictureInPicture="true" controlslist='nodownload'></video>
+                  <video class="video" id="remote-video" ref="remoteVideo" @playing="onVideoPlaying" :class="{rotate:isRotate}" autoplay muted playsinline disablePictureInPicture="true" controlslist='nodownload'></video>
                   <canvas id="canvasCoc" :class="{rotate:isRotate}" ref="remoteCanvas" @mousemove.prevent="mousemove" @mousedown.prevent="mousedown" @mousewheel.prevent="mousewheel" @mouseup.prevent="mouseup" @touchstart.prevent="touchstart" @touchmove.prevent="touchmove" @touchend.prevent="touchend" @touchcancel.prevent="touchcancel"></canvas>
                 </div>
               </div>
@@ -1133,7 +1133,7 @@ div.swal2-container {
               <div class="loading-progress" style="height: 12px !important;">
                 <div class="progress-bar" :style="{width : showLoadingProgress + '%'}"></div>
               </div>
-              <p class="loading-percent">Initializing session... {{Math.ceil(showLoadingProgress)}}%</p>
+              <p class="loading-percent">Initializing session... {{Math.min(99, Math.floor(showLoadingProgress))}}%</p>
               <p style="opacity: 0.001;" id="step-msg"></p>
               <p id="step-msg1">Your session is just seconds away!</p>
             </div>
@@ -1480,6 +1480,7 @@ window["App"] = new Vue({
     'keyboardMode': loadKeyboardMode(),
     'draftKeyboardMode': loadKeyboardMode(),
     'realKeysDown': {},
+    'loadingFallbackTimer': null,
     'draftResolution': loadResolution(),
     'resolutionOptions': RESOLUTION_OPTIONS,
     'showDetailsModal': false,
@@ -1738,6 +1739,9 @@ window["App"] = new Vue({
         return;
       }
       if (down) {
+        if (!this["dataChannel"] || this["dataChannel"]["readyState"] !== "open") {
+          return;
+        }
         if (this["realKeysDown"][event["code"]]) {
           return;
         }
@@ -1758,6 +1762,20 @@ window["App"] = new Vue({
         }
       }
       this["realKeysDown"] = {};
+    },
+    'onVideoPlaying'() {
+      if (this["loadingFallbackTimer"] || this["showLoadingProgress"] >= 100) {
+        return;
+      }
+      this["loadingFallbackTimer"] = setTimeout(() => {
+        this["loadingFallbackTimer"] = null;
+        if (this["showLoadingProgress"] < 100) {
+          this["loadingProgress"] = 0x64;
+        }
+      }, 3000);
+    },
+    'realKeysActive'() {
+      return this["keyboardMode"] === "real" && !!this["dataChannel"] && this["dataChannel"]["readyState"] === "open" && this["showLoadingProgress"] >= 100;
     },
     'openSettings'() {
       this["draftResolution"] = this["resolution"];
@@ -3953,11 +3971,14 @@ window["App"] = new Vue({
       if (_0x45376d["keyCode"] >= 0x70 && _0x45376d["keyCode"] <= 0x7b) {
         return;
       }
-      _0x45376d["preventDefault"]();
       if (this["keyboardMode"] === "real") {
-        this["sendRealKey"](_0x45376d, false);
+        if (this["realKeysActive"]() || this["realKeysDown"][_0x45376d["code"]]) {
+          _0x45376d["preventDefault"]();
+          this["sendRealKey"](_0x45376d, false);
+        }
         return;
       }
+      _0x45376d["preventDefault"]();
       if (_0x45376d["key"] === '`') {
         return;
       }
@@ -4039,6 +4060,9 @@ window["App"] = new Vue({
       const _0x223041 = _0xdb46f8["target"]["tagName"]["toLowerCase"]();
       const _0x450e1e = _0xdb46f8["target"]["isContentEditable"];
       if (_0x223041 === "input" || _0x223041 === "textarea" || _0x450e1e) {
+        return;
+      }
+      if (this["keyboardMode"] === "real" && !this["realKeysActive"]()) {
         return;
       }
       _0xdb46f8["preventDefault"]();
