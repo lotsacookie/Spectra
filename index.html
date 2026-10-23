@@ -701,6 +701,9 @@ input:checked + .mini-slider:before { transform: translateX(14px); background-co
   max-width: none !important;
   max-height: none !important;
   filter: none !important;
+  image-rendering: auto;
+  will-change: transform;
+  backface-visibility: hidden;
 }
 .rotate {
   transform: rotate(90deg);
@@ -2373,6 +2376,47 @@ window["App"] = new Vue({
         this["reportStates"]();
       }, this["initParams"]["statInterval"]);
     },
+    'tuneVideoSdp'(sdp) {
+      const dims = parseResolution(this["resolution"]);
+      const big = dims.long >= 1920;
+      const userMax = Number(this["bitRate"]) || 0;
+      const maxKbps = userMax > 0 ? userMax : big ? 12000 : 8000;
+      const minKbps = Math.min(maxKbps, big ? 4000 : 2500);
+      const startKbps = Math.min(maxKbps, big ? 7000 : 4500);
+      const hint = ";x-google-max-bitrate=" + maxKbps + ";x-google-min-bitrate=" + minKbps + ";x-google-start-bitrate=" + startKbps;
+      let inVideo = false;
+      const out = [];
+      for (const line of sdp.split("\r\n")) {
+        if (line.indexOf("m=") === 0) {
+          inVideo = line.indexOf("m=video") === 0;
+        }
+        if (inVideo && line.indexOf("b=") === 0) {
+          continue;
+        }
+        if (inVideo && /^a=fmtp:\d+/.test(line) && line.indexOf("apt=") === -1 && line.indexOf("x-google-") === -1) {
+          out.push(line + hint);
+          continue;
+        }
+        out.push(line);
+        if (inVideo && line.indexOf("c=") === 0) {
+          out.push("b=AS:" + maxKbps);
+        }
+      }
+      return out.join("\r\n");
+    },
+    'setPlayoutDelay'(seconds) {
+      if (!this.pc) {
+        return;
+      }
+      for (const receiver of this.pc["getReceivers"]()) {
+        if (receiver["jitterBufferTarget"] !== undefined) {
+          receiver["jitterBufferTarget"] = seconds * 0x3e8;
+        }
+        if (receiver["playoutDelayHint"] !== undefined) {
+          receiver["playoutDelayHint"] = seconds;
+        }
+      }
+    },
     'adjustPlayoutDelayFromStats'(_0x1a3194) {
       const _0x172dde = _0x1a3194["jitter"] ?? 0x1;
       const _0x499d41 = _0x1a3194["retransmittedPacketsReceived"] ?? 0x0;
@@ -2381,24 +2425,15 @@ window["App"] = new Vue({
       const _0x478f34 = _0x1a3194["jitterBufferMinimumDelay"] ?? 0x0;
       const _0x1e67ae = _0x294adc > 0x0 ? _0x499d41 / _0x294adc : 0x1;
       const _0x2f09e7 = _0x2303dd > 0x0 ? _0x478f34 / _0x2303dd * 0x3e8 : 0x64;
-      let _0x4a7ecf = 0.2;
+      let _0x4a7ecf = 0.1;
       if (_0x172dde < 0.005 && _0x1e67ae < 0.05 && _0x2f09e7 < 0x46) {
-        _0x4a7ecf = 0.04;
+        _0x4a7ecf = 0.01;
       } else if (_0x172dde < 0.01 && _0x1e67ae < 0.1 && _0x2f09e7 < 0x64) {
-        _0x4a7ecf = 0.1;
-      } else {
-        _0x4a7ecf = 0.2;
+        _0x4a7ecf = 0.04;
       }
-      for (const _0x1ec09a of this.pc["getReceivers"]()) {
-        if (_0x1ec09a["jitterBufferTarget"] !== undefined) {
-          _0x1ec09a["jitterBufferTarget"] = _0x4a7ecf;
-        }
-        if (_0x1ec09a["playoutDelayHint"] !== undefined) {
-          _0x1ec09a["playoutDelayHint"] = _0x4a7ecf;
-        }
-        if (_0x1ec09a["jitterBufferDelayHint"] !== undefined) {
-          _0x1ec09a["jitterBufferDelayHint"] = _0x4a7ecf;
-        }
+      if (this["lastPlayoutDelay"] !== _0x4a7ecf) {
+        this["lastPlayoutDelay"] = _0x4a7ecf;
+        this["setPlayoutDelay"](_0x4a7ecf);
       }
     },
     'getStats'() {
@@ -2430,7 +2465,7 @@ window["App"] = new Vue({
       });
       setTimeout(() => {
         this["getStats"]();
-      }, 0x3e8);
+      }, 0x1f4);
     },
     'reportCoordinator'() {
       if (this["statesBWE"]) {
@@ -3040,6 +3075,7 @@ window["App"] = new Vue({
             _0x10d034["$refs"]["remoteVideo"]["srcObject"] = _0x302cda["streams"][0x0];
             _0x10d034["remoteStream"] = _0x302cda["streams"][0x0];
             _0x10d034["receivers"] = this.pc["getReceivers"]();
+            _0x10d034["setPlayoutDelay"](0.04);
             _0x10d034["pushSteps"]("Game stream received");
             this["loadingProgress"] = 0x50;
             if (this["socket"]) {
@@ -3310,17 +3346,7 @@ window["App"] = new Vue({
       this.pc["createAnswer"]()["then"](_0x1d5d64 => {
         this["pushSteps"]("Local parameters have been set");
         this["loadingProgress"] = 0x46;
-        if (this["bitRate"] > 0x0) {
-          var _0x3ecb0c = _0x1d5d64["sdp"]["split"]("\r\n");
-          _0x3ecb0c["forEach"]((_0x3bdb31, _0x29014c) => {
-            if (/^a=fmtp:\d*/["test"](_0x3bdb31)) {
-              _0x3ecb0c[_0x29014c] = _0x3bdb31 + ";x-google-max-bitrate=" + this["bitRate"] + ";x-google-min-bitrate=1000;x-google-start-bitrate=1000";
-            } else if (/^a=mid:(1|video)/["test"](_0x3bdb31)) {
-              _0x3ecb0c[_0x29014c] += "\r\nb=AS:" + this["bitRate"];
-            }
-          });
-          _0x1d5d64["sdp"] = _0x3ecb0c["join"]("\r\n");
-        }
+        _0x1d5d64["sdp"] = this["tuneVideoSdp"](_0x1d5d64["sdp"]);
         this["oldAnswer"] = _0x1d5d64;
         this.pc["setLocalDescription"](_0x1d5d64);
         this["sendMessage"](_0x1d5d64);
