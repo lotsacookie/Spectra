@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Spectra</title>
+<style>
+html, body { margin: 0; height: 100%; background: #111111; color: #ffffff; font-family: system-ui, sans-serif; }
+#shell-status { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; }
+#shell-spinner { width: 36px; height: 36px; border: 3px solid #ffffff; border-top-color: transparent; border-radius: 50%; animation: shell-spin 0.8s linear infinite; }
+#shell-message { font-size: 13px; color: #a1a1aa; letter-spacing: 0.1em; text-transform: uppercase; }
+@keyframes shell-spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div id="shell-status">
+  <div id="shell-spinner"></div>
+  <div id="shell-message">Loading</div>
+</div>
+<script>
+(function () {
+  var OWNER = "lotsacookie";
+  var REPO = "Spectra";
+  var BRANCH = "main";
+  var FILE = "index.html";
+  var CACHE_KEY = "spectra_shell_cache_v1";
+  var API_TIMEOUT = 5000;
+  var FILE_TIMEOUT = 15000;
+
+  function readCache() {
+    try {
+      var raw = localStorage.getItem(CACHE_KEY);
+      if (!raw) {
+        return null;
+      }
+      var parsed = JSON.parse(raw);
+      return parsed && typeof parsed.html === "string" && parsed.html.length ? parsed : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function writeCache(sha, html) {
+    try {
+      localStorage.setItem(CACHE_KEY, JSON.stringify({ sha: sha, html: html, time: Date.now() }));
+    } catch (e) {}
+  }
+
+  function fetchText(url, options, timeout) {
+    var controller = typeof AbortController === "function" ? new AbortController() : null;
+    var timer = controller ? setTimeout(function () { controller.abort(); }, timeout) : null;
+    var init = Object.assign({}, options || {});
+    if (controller) {
+      init.signal = controller.signal;
+    }
+    return fetch(url, init).then(function (response) {
+      if (timer) {
+        clearTimeout(timer);
+      }
+      if (!response.ok) {
+        var error = new Error("HTTP " + response.status);
+        error.status = response.status;
+        throw error;
+      }
+      return response.text();
+    }, function (error) {
+      if (timer) {
+        clearTimeout(timer);
+      }
+      throw error;
+    });
+  }
+
+  function validHtml(text) {
+    return typeof text === "string" && text.length > 500 && /<html[\s>]/i.test(text);
+  }
+
+  function getLatestSha() {
+    var url = "https://api.github.com/repos/" + OWNER + "/" + REPO + "/commits/" + BRANCH;
+    return fetchText(url, { headers: { "Accept": "application/vnd.github.sha" }, cache: "no-store" }, API_TIMEOUT).then(function (text) {
+      var sha = text.trim();
+      if (!/^[0-9a-f]{40}$/i.test(sha)) {
+        throw new Error("bad sha");
+      }
+      return sha;
+    });
+  }
+
+  function getFileAtSha(sha) {
+    var sources = [
+      "https://raw.githubusercontent.com/" + OWNER + "/" + REPO + "/" + sha + "/" + FILE,
+      "https://cdn.jsdelivr.net/gh/" + OWNER + "/" + REPO + "@" + sha + "/" + FILE
+    ];
+    return tryInOrder(sources);
+  }
+
+  function getFileFromJsdelivr() {
+    var sources = [
+      "https://cdn.jsdelivr.net/gh/" + OWNER + "/" + REPO + "@" + BRANCH + "/" + FILE,
+      "https://fastly.jsdelivr.net/gh/" + OWNER + "/" + REPO + "@" + BRANCH + "/" + FILE,
+      "https://gcore.jsdelivr.net/gh/" + OWNER + "/" + REPO + "@" + BRANCH + "/" + FILE
+    ];
+    return tryInOrder(sources);
+  }
+
+  function tryInOrder(urls) {
+    var index = 0;
+    function next() {
+      if (index >= urls.length) {
+        return Promise.reject(new Error("all sources failed"));
+      }
+      var url = urls[index++];
+      return fetchText(url, {}, FILE_TIMEOUT).then(function (text) {
+        if (!validHtml(text)) {
+          throw new Error("invalid html");
+        }
+        return text;
+      }).catch(next);
+    }
+    return next();
+  }
+
+  function render(html) {
+    document.open();
+    document.write(html);
+    document.close();
+  }
+
+  function showError() {
+    var message = document.getElementById("shell-message");
+    var spinner = document.getElementById("shell-spinner");
+    if (spinner) {
+      spinner.style.display = "none";
+    }
+    if (message) {
+      message.textContent = "Unable to load. Check your connection and refresh.";
+    }
+  }
+
+  function load() {
+    var cache = readCache();
+    return getLatestSha().then(function (sha) {
+      if (cache && cache.sha === sha) {
+        return { html: cache.html, sha: sha, fresh: false };
+      }
+      return getFileAtSha(sha).then(function (html) {
+        writeCache(sha, html);
+        return { html: html, sha: sha, fresh: true };
+      });
+    }).catch(function () {
+      if (cache) {
+        return { html: cache.html, sha: cache.sha, fresh: false };
+      }
+      return getFileFromJsdelivr().then(function (html) {
+        writeCache(null, html);
+        return { html: html, sha: null, fresh: true };
+      });
+    });
+  }
+
+  load().then(function (result) {
+    render(result.html);
+  }).catch(function () {
+    var cache = readCache();
+    if (cache) {
+      render(cache.html);
+    } else {
+      showError();
+    }
+  });
+})();
+</script>
+</body>
+</html>
