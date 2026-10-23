@@ -1333,6 +1333,21 @@ const ANDROID_KEYCODES = (() => {
   }
   return map;
 })();
+const REAL_STICK = {
+  'x': 230,
+  'y': 520,
+  'radius': 110
+};
+const REAL_JUMP = {
+  'x': 1130,
+  'y': 560
+};
+const REAL_MOVE_KEYS = {
+  'KeyW': [0, -1], 'ArrowUp': [0, -1],
+  'KeyS': [0, 1], 'ArrowDown': [0, 1],
+  'KeyA': [-1, 0], 'ArrowLeft': [-1, 0],
+  'KeyD': [1, 0], 'ArrowRight': [1, 0]
+};
 function loadKeyboardMode() {
   let stored = null;
   try {
@@ -1481,6 +1496,8 @@ window["App"] = new Vue({
     'draftKeyboardMode': loadKeyboardMode(),
     'realKeysDown': {},
     'loadingFallbackTimer': null,
+    'realStickActive': false,
+    'realStickPos': null,
     'draftResolution': loadResolution(),
     'resolutionOptions': RESOLUTION_OPTIONS,
     'showDetailsModal': false,
@@ -1753,6 +1770,60 @@ window["App"] = new Vue({
         delete this["realKeysDown"][event["code"]];
       }
       this["sendDataChannelMessage"]("key>" + (down ? "keydown:" : "keyup:") + code);
+      this["updateRealTouch"](event["code"], down);
+    },
+    'realStickCenter'() {
+      const c = this["currentGameConfig"]?.["center"];
+      if (c && (c.x || c.y)) {
+        return {
+          'x': c.x,
+          'y': c.y
+        };
+      }
+      return {
+        'x': REAL_STICK.x,
+        'y': REAL_STICK.y
+      };
+    },
+    'updateRealTouch'(code, down) {
+      if (code === "Space") {
+        const j = this["currentGameConfig"]?.["jump"] || REAL_JUMP;
+        const tail = ":12," + j.x + "," + j.y;
+        this["sendDataChannelMessage"]("touch>Touch " + (down ? "start" : "end") + tail, true);
+        return;
+      }
+      if (!REAL_MOVE_KEYS[code]) {
+        return;
+      }
+      let dx = 0;
+      let dy = 0;
+      for (const k in REAL_MOVE_KEYS) {
+        if (this["realKeysDown"][k]) {
+          dx += REAL_MOVE_KEYS[k][0];
+          dy += REAL_MOVE_KEYS[k][1];
+        }
+      }
+      const c = this["realStickCenter"]();
+      const len = Math["sqrt"](dx * dx + dy * dy);
+      if (len === 0) {
+        if (this["realStickActive"]) {
+          const pos = this["realStickPos"] || c;
+          this["sendDataChannelMessage"]("touch>Touch end:10," + pos.x + ',' + pos.y, true);
+          this["realStickActive"] = false;
+          this["realStickPos"] = null;
+        }
+        return;
+      }
+      const pos = {
+        'x': Math["round"](c.x + dx / len * REAL_STICK.radius),
+        'y': Math["round"](c.y + dy / len * REAL_STICK.radius)
+      };
+      if (!this["realStickActive"]) {
+        this["sendDataChannelMessage"]("touch>Touch start:10," + c.x + ',' + c.y, true);
+        this["realStickActive"] = true;
+      }
+      this["sendDataChannelMessage"]("touch>Touch move:10," + pos.x + ',' + pos.y, true);
+      this["realStickPos"] = pos;
     },
     'releaseRealKeys'() {
       for (const code in this["realKeysDown"]) {
@@ -1762,6 +1833,12 @@ window["App"] = new Vue({
         }
       }
       this["realKeysDown"] = {};
+      if (this["realStickActive"]) {
+        const c = this["realStickPos"] || this["realStickCenter"]();
+        this["sendDataChannelMessage"]("touch>Touch end:10," + c.x + ',' + c.y, true);
+        this["realStickActive"] = false;
+        this["realStickPos"] = null;
+      }
     },
     'onVideoPlaying'() {
       if (this["loadingFallbackTimer"] || this["showLoadingProgress"] >= 100) {
